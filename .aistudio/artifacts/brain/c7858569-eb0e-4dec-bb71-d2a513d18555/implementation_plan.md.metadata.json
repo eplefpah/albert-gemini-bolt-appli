@@ -1,0 +1,6 @@
+{
+  "summary":  "Plan d'implémentation pour la réorganisation multi-métiers de l'Agrocampus : sélecteur de profil persistant dans le bandeau supérieur, déclinaison en 6 profils métiers (Enseignants, Formateurs CFA/CFPPA, Exploitation agricole, Administration/Intendance, Vie scolaire, Personnel technique/Région IdF/Paysage), personnalisation dynamique des gabarits de prompts, des consignes système pour Albert DINUM et des corpus documentaires RAG.",
+  "updatedAt":  "2026-09-27T13:09:48.750036811Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

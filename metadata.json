@@ -1,0 +1,8 @@
+{
+  "name": "Remix Console Albert DINUM - Agrocampus \u0026 Souveraineté",
+  "description": "Portail d\u0027intelligence artificielle souveraine pour l\u0027enseignement et l\u0027exploitation agricole péri-urbaine propulsé par l\u0027API Albert de la DINUM.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
