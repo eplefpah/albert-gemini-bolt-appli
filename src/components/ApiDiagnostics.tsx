@@ -49,11 +49,11 @@ export const ApiDiagnostics: React.FC<ApiDiagnosticsProps> = ({
     setTestResponse(null);
     const start = Date.now();
     try {
-      const resp = await fetch('https://albert.api.etalab.gouv.fr/v1/chat/completions', {
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/albert-proxy/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${settings.albertApiKey}`,
+          'x-albert-key': settings.albertApiKey,
         },
         body: JSON.stringify({
           model: testModel,

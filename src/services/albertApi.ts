@@ -2,7 +2,7 @@ import { AlbertModel, ChatMessage, RagDocument } from '../types';
 import { AGROCAMPUS_KNOWLEDGE_DOCS } from '../data/agrocampusKnowledge';
 import { DEFAULT_SETTINGS } from './storageService';
 
-const ALBERT_BASE_URL = 'https://albert.api.etalab.gouv.fr/v1';
+const PROXY_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/albert-proxy`;
 
 const DEFAULT_MODELS: AlbertModel[] = [
   {
@@ -49,15 +49,18 @@ const DEFAULT_MODELS: AlbertModel[] = [
   },
 ];
 
-function resolveApiKey(customApiKey?: string): string {
-  return customApiKey || DEFAULT_SETTINGS.albertApiKey;
+function buildHeaders(customApiKey?: string, extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  if (customApiKey) {
+    headers['x-albert-key'] = customApiKey;
+  }
+  return headers;
 }
 
 export async function getAlbertModels(customApiKey?: string): Promise<AlbertModel[]> {
   try {
-    const key = resolveApiKey(customApiKey);
-    const resp = await fetch(`${ALBERT_BASE_URL}/models`, {
-      headers: { Authorization: `Bearer ${key}` },
+    const resp = await fetch(`${PROXY_BASE}/models`, {
+      headers: buildHeaders(customApiKey),
     });
     if (!resp.ok) {
       return DEFAULT_MODELS;
@@ -103,14 +106,9 @@ export async function streamAlbertChat(
 ): Promise<void> {
   const startTime = Date.now();
   try {
-    const key = resolveApiKey(options.customApiKey);
-
-    const response = await fetch(`${ALBERT_BASE_URL}/chat/completions`, {
+    const response = await fetch(`${PROXY_BASE}/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-      },
+      headers: buildHeaders(options.customApiKey, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         model,
         messages,
@@ -208,12 +206,9 @@ export async function searchRagCorpus(
 
   if (query.trim().length > 1) {
     try {
-      const resp = await fetch(`${ALBERT_BASE_URL}/search`, {
+      const resp = await fetch(`${PROXY_BASE}/search`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${DEFAULT_SETTINGS.albertApiKey}`,
-        },
+        headers: buildHeaders(DEFAULT_SETTINGS.albertApiKey, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           query: query.trim(),
           collections: collectionIds && collectionIds.length > 0 ? collectionIds : undefined,
@@ -298,10 +293,8 @@ export async function testAlbertConnection(key?: string): Promise<{
 }> {
   const start = Date.now();
   try {
-    const apiKey = resolveApiKey(key);
-
-    const resp = await fetch(`${ALBERT_BASE_URL}/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+    const resp = await fetch(`${PROXY_BASE}/models`, {
+      headers: buildHeaders(key),
     });
     const latencyMs = Date.now() - start;
 
@@ -346,8 +339,6 @@ export async function transcribeAudio(
   segments?: any[];
   usage?: any;
 }> {
-  const key = resolveApiKey(params.customApiKey);
-
   const byteString = atob(params.audioBase64);
   const bytes = new Uint8Array(byteString.length);
   for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
@@ -360,11 +351,9 @@ export async function transcribeAudio(
   if (params.response_format) formData.append('response_format', params.response_format);
   if (typeof params.temperature === 'number') formData.append('temperature', String(params.temperature));
 
-  const resp = await fetch(`${ALBERT_BASE_URL}/audio/transcriptions`, {
+  const resp = await fetch(`${PROXY_BASE}/audio/transcriptions`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${key}`,
-    },
+    headers: buildHeaders(params.customApiKey),
     body: formData,
   });
 
@@ -395,10 +384,8 @@ export async function transcribeAudio(
 
 // --- GESTION DES COLLECTIONS RAG ---
 export async function getAlbertCollections(customApiKey?: string): Promise<any[]> {
-  const key = resolveApiKey(customApiKey);
-
-  const resp = await fetch(`${ALBERT_BASE_URL}/collections?limit=100&offset=0`, {
-    headers: { Authorization: `Bearer ${key}` },
+  const resp = await fetch(`${PROXY_BASE}/collections?limit=100&offset=0`, {
+    headers: buildHeaders(customApiKey),
   });
   if (!resp.ok) {
     const err = await resp.text();
@@ -413,14 +400,9 @@ export async function createAlbertCollection(
   description?: string,
   customApiKey?: string
 ): Promise<{ id: number }> {
-  const key = resolveApiKey(customApiKey);
-
-  const resp = await fetch(`${ALBERT_BASE_URL}/collections`, {
+  const resp = await fetch(`${PROXY_BASE}/collections`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-    },
+    headers: buildHeaders(customApiKey, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ name, description }),
   });
   if (!resp.ok) {
@@ -434,11 +416,9 @@ export async function deleteAlbertCollection(
   id: number,
   customApiKey?: string
 ): Promise<void> {
-  const key = resolveApiKey(customApiKey);
-
-  const resp = await fetch(`${ALBERT_BASE_URL}/collections/${id}`, {
+  const resp = await fetch(`${PROXY_BASE}/collections/${id}`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${key}` },
+    headers: buildHeaders(customApiKey),
   });
   if (!resp.ok) {
     const err = await resp.text();
@@ -451,14 +431,12 @@ export async function getAlbertDocuments(
   collectionId?: number,
   customApiKey?: string
 ): Promise<any[]> {
-  const key = resolveApiKey(customApiKey);
-
   const url = collectionId
-    ? `${ALBERT_BASE_URL}/documents?limit=50&collection_id=${collectionId}`
-    : `${ALBERT_BASE_URL}/documents?limit=50`;
+    ? `${PROXY_BASE}/documents?limit=50&collection_id=${collectionId}`
+    : `${PROXY_BASE}/documents?limit=50`;
 
   const resp = await fetch(url, {
-    headers: { Authorization: `Bearer ${key}` },
+    headers: buildHeaders(customApiKey),
   });
   if (!resp.ok) {
     const err = await resp.text();
@@ -482,8 +460,6 @@ export interface UploadDocumentParams {
 export async function uploadAlbertDocument(
   params: UploadDocumentParams
 ): Promise<{ id: number; name?: string }> {
-  const key = resolveApiKey(params.customApiKey);
-
   const byteString = atob(params.fileBase64);
   const bytes = new Uint8Array(byteString.length);
   for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
@@ -495,11 +471,9 @@ export async function uploadAlbertDocument(
   if (params.chunk_size) formData.append('chunk_size', String(params.chunk_size));
   if (params.chunk_overlap) formData.append('chunk_overlap', String(params.chunk_overlap));
 
-  const resp = await fetch(`${ALBERT_BASE_URL}/documents`, {
+  const resp = await fetch(`${PROXY_BASE}/documents`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${key}`,
-    },
+    headers: buildHeaders(params.customApiKey),
     body: formData,
   });
 
@@ -523,11 +497,9 @@ export async function deleteAlbertDocument(
   id: number,
   customApiKey?: string
 ): Promise<void> {
-  const key = resolveApiKey(customApiKey);
-
-  const resp = await fetch(`${ALBERT_BASE_URL}/documents/${id}`, {
+  const resp = await fetch(`${PROXY_BASE}/documents/${id}`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${key}` },
+    headers: buildHeaders(customApiKey),
   });
   if (!resp.ok) {
     const err = await resp.text();
@@ -542,14 +514,9 @@ export async function searchAlbertOfficial(
   limit: number = 5,
   customApiKey?: string
 ): Promise<RagDocument[]> {
-  const key = resolveApiKey(customApiKey);
-
-  const resp = await fetch(`${ALBERT_BASE_URL}/search`, {
+  const resp = await fetch(`${PROXY_BASE}/search`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-    },
+    headers: buildHeaders(customApiKey, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       query,
       collection_ids: collectionIds,

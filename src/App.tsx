@@ -87,8 +87,8 @@ export default function App() {
   const refreshHealth = async () => {
     try {
       const start = Date.now();
-      const resp = await fetch('https://albert.api.etalab.gouv.fr/v1/models', {
-        headers: { Authorization: `Bearer ${settings.albertApiKey}` },
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/albert-proxy/models`, {
+        headers: { 'x-albert-key': settings.albertApiKey },
         signal: AbortSignal.timeout(6000),
       });
       const latencyMs = Date.now() - start;
@@ -98,7 +98,7 @@ export default function App() {
         albert: {
           connected: resp.ok,
           latencyMs,
-          endpoint: 'https://albert.api.etalab.gouv.fr/v1',
+          endpoint: 'albert-proxy (Supabase Edge Function)',
         },
         supabase: {
           connected: false,
@@ -110,7 +110,7 @@ export default function App() {
       setHealth({
         status: 'degraded',
         timestamp: new Date().toISOString(),
-        albert: { connected: false, latencyMs: 0, endpoint: 'https://albert.api.etalab.gouv.fr/v1' },
+        albert: { connected: false, latencyMs: 0, endpoint: 'albert-proxy (Supabase Edge Function)' },
         supabase: { connected: false, latencyMs: 0, url: 'N/A (mode statique)' },
       });
     }
