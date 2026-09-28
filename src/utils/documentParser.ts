@@ -1,15 +1,10 @@
 import mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { AttachedDocument } from '../types';
 
-// Configuration du worker PDF.js (utilisation de CDN sécurisé pour éviter les problèmes de worker bundler)
-try {
-  if (pdfjsLib.GlobalWorkerOptions && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '4.10.38'}/pdf.worker.min.mjs`;
-  }
-} catch {
-  // Ignorer si déjà configuré
-}
+// Worker PDF.js livré avec l'application (dossier assets/), sans dépendance à un CDN externe.
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 /**
  * Extrait le texte d'un fichier PDF

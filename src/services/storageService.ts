@@ -1,26 +1,38 @@
 import { ConversationSession, UserSettings } from '../types';
 
 const STORAGE_KEY_SESSIONS = 'albert_agrocampus_sessions_v1';
-const STORAGE_KEY_SETTINGS = 'albert_agrocampus_settings_v1';
+const STORAGE_KEY_SETTINGS = 'albert_agrocampus_settings_v2';
+// Anciens paramètres (contenaient une clé API et des accès Supabase) : on n'en reprend que les réglages du modèle.
+const LEGACY_STORAGE_KEY_SETTINGS = 'albert_agrocampus_settings_v1';
 
 export const DEFAULT_SETTINGS: UserSettings = {
-  albertApiKey:
-    'sk-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxNzQ1NCwidG9rZW5faWQiOjYyOTI1LCJleHBpcmVzIjoxODIxNzM2ODAwfQ.7P1delg6j--1zjiSTy4jAC1t2hHNL_ZFWJDswZCUs50',
+  // Vide = la clé configurée sur le serveur (api/config.php) est utilisée.
+  albertApiKey: '',
   defaultModel: 'ministral-3-8b-instruct-2512',
   temperature: 0.7,
   maxTokens: 2048,
-  supabaseUrl: 'http://185.219.215.120:8007',
-  supabaseUser: 'supabase',
-  supabasePass: '&1Supabase;',
-  autoSync: true,
 };
 
 // --- GESTION DES PARAMÈTRES UTILISATEUR ---
 export function loadUserSettings(): UserSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_SETTINGS);
-    if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+
+    const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY_SETTINGS);
+    if (legacyRaw) {
+      const legacy = JSON.parse(legacyRaw);
+      const migrated: UserSettings = {
+        ...DEFAULT_SETTINGS,
+        defaultModel: legacy.defaultModel || DEFAULT_SETTINGS.defaultModel,
+        temperature: legacy.temperature ?? DEFAULT_SETTINGS.temperature,
+        maxTokens: legacy.maxTokens ?? DEFAULT_SETTINGS.maxTokens,
+      };
+      saveUserSettings(migrated);
+      localStorage.removeItem(LEGACY_STORAGE_KEY_SETTINGS);
+      return migrated;
+    }
+    return DEFAULT_SETTINGS;
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -81,44 +93,14 @@ export function deleteLocalSession(sessionId: string): ConversationSession[] {
   return updated;
 }
 
-// --- SYNCHRONISATION SUPABASE ---
-export async function syncSessionToSupabase(
-  session: ConversationSession
-): Promise<{ success: boolean; statusText: string }> {
-  // En mode statique (sans serveur Express), on garde tout en local.
-  // Les sessions sont déjà sauvegardées dans localStorage par upsertLocalSession.
-  return { success: true, statusText: 'Sauvegardé localement' };
-}
-
-export async function testSupabaseConnection(
-  _url?: string,
-  _user?: string,
-  _pass?: string
-): Promise<{
-  connected: boolean;
-  statusCode: number;
-  latencyMs: number;
-  authenticated: boolean;
-  error?: string;
-}> {
-  return {
-    connected: false,
-    statusCode: 0,
-    latencyMs: 0,
-    authenticated: false,
-    error: 'Serveur proxy non disponible en mode statique',
-  };
-}
-
-// --- EXPORT COMPATIBLE IONOS /data/ ---
-export function exportToIonosDataFile(sessions: ConversationSession[]): void {
+// --- SAUVEGARDE DES CONVERSATIONS (fichier JSON) ---
+export function exportSessionsToJson(sessions: ConversationSession[]): void {
   const payload = {
     metadonnees: {
       plateforme: 'Albert DINUM · Agrocampus Saint-Germain-en-Laye',
-      dossier_destination: '/data/',
       date_export: new Date().toISOString(),
       nombre_conversations: sessions.length,
-      version: '1.0.0',
+      version: '2.0.0',
     },
     conversations: sessions,
   };
@@ -129,7 +111,7 @@ export function exportToIonosDataFile(sessions: ConversationSession[]): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `albert_agrocampus_data_${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `albert_agrocampus_conversations_${new Date().toISOString().slice(0, 10)}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

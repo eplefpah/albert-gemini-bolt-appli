@@ -41,7 +41,6 @@ export interface ConversationSession {
   createdAt: number;
   updatedAt: number;
   messages: ChatMessage[];
-  isSyncedSupabase?: boolean;
   category?: 'agrocampus' | 'pedagogie' | 'exploitation' | 'general';
 }
 
@@ -113,11 +112,8 @@ export interface ApiHealthStatus {
     connected: boolean;
     latencyMs: number;
     endpoint: string;
-  };
-  supabase: {
-    connected: boolean;
-    latencyMs: number;
-    url: string;
+    modelsCount: number;
+    error?: string;
   };
 }
 
@@ -126,10 +122,6 @@ export interface UserSettings {
   defaultModel: string;
   temperature: number;
   maxTokens: number;
-  supabaseUrl: string;
-  supabaseUser: string;
-  supabasePass: string;
-  autoSync: boolean;
 }
 
 export interface AudioTranscriptionResult {

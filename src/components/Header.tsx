@@ -8,7 +8,6 @@ import {
   Activity,
   Settings,
   Download,
-  Database,
   GraduationCap,
   Briefcase,
   Building2,
@@ -29,7 +28,7 @@ interface HeaderProps {
   health: ApiHealthStatus | null;
   onRefreshHealth: () => void;
   onOpenSettings: () => void;
-  onExportIonos: () => void;
+  onExportSessions: () => void;
   userProfile: UserProfileConfig;
   onSelectProfile: (profileId: UserProfileId) => void;
 }
@@ -39,12 +38,11 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   health,
   onOpenSettings,
-  onExportIonos,
+  onExportSessions,
   userProfile,
   onSelectProfile,
 }) => {
   const albertOk = health?.albert.connected ?? true;
-  const supabaseOk = health?.supabase.connected ?? true;
 
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -349,7 +347,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      onExportIonos();
+                      onExportSessions();
                       setIsToolsMenuOpen(false);
                     }}
                     className="w-full text-left p-2 rounded-lg text-xs hover:bg-slate-50 text-slate-700 transition-colors flex items-center gap-2.5 cursor-pointer"
@@ -358,8 +356,8 @@ export const Header: React.FC<HeaderProps> = ({
                       <Download className="w-3.5 h-3.5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <span className="block font-medium">Export Ionos /data</span>
-                      <span className="text-[10px] text-slate-400">Sauvegarder les sessions</span>
+                      <span className="block font-medium">Exporter les conversations</span>
+                      <span className="text-[10px] text-slate-400">Sauvegarde au format JSON</span>
                     </div>
                   </button>
                 </div>
@@ -384,26 +382,16 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="sm:hidden">Guide</span>
             </button>
 
-            {/* Statuts connectivité compacts */}
+            {/* Statut de connexion compact */}
             <div className="hidden xl:flex items-center gap-2 px-2 py-1 bg-slate-100 rounded-md border border-slate-200 text-[11px] font-mono tabular-nums text-slate-600">
               <div
                 className="flex items-center gap-1"
-                title={`Albert DINUM API: ${albertOk ? 'Opérationnel' : 'Hors-ligne'}`}
+                title={`Albert DINUM API: ${albertOk ? 'Opérationnel' : health?.albert.error || 'Hors-ligne'}`}
               >
                 <span
                   className={`w-2 h-2 rounded-full ${albertOk ? 'bg-emerald-500' : 'bg-red-500'}`}
                 />
                 <span className="text-[10px]">Albert</span>
-              </div>
-              <span className="text-slate-300">|</span>
-              <div
-                className="flex items-center gap-1"
-                title={`Supabase: ${supabaseOk ? 'Connecté' : 'Non joignable'}`}
-              >
-                <Database className="w-2.5 h-2.5 text-slate-400" />
-                <span
-                  className={`w-2 h-2 rounded-full ${supabaseOk ? 'bg-emerald-500' : 'bg-amber-500'}`}
-                />
               </div>
             </div>
 

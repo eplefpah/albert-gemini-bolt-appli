@@ -135,7 +135,7 @@ export const RagSearch: React.FC<RagSearchProps> = ({ onInjectIntoChat, settings
     try {
       const colIds =
         filterCollectionId !== 'all' ? [Number(filterCollectionId)] : undefined;
-      const docs = await searchRagCorpus(searchTerm, selectedTag, colIds);
+      const docs = await searchRagCorpus(searchTerm, selectedTag, colIds, settings?.albertApiKey);
       setResults(docs.filter((d) => d.score >= minScoreThreshold));
     } catch (err: any) {
       setErrorMsg('Erreur de recherche RAG : ' + (err.message || ''));

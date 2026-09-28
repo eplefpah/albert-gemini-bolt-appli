@@ -1,0 +1,13 @@
+# Le fichier de configuration (clé API) n'est jamais accessible depuis le web.
+<FilesMatch "^config.*\.php$">
+  Require all denied
+</FilesMatch>
+
+# Pas de compression sur le proxy : les réponses du chat doivent arriver au fil de l'eau.
+<IfModule mod_env.c>
+  SetEnv no-gzip 1
+</IfModule>
+
+<Files ".user.ini">
+  Require all denied
+</Files>
