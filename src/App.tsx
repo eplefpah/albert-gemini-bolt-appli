@@ -86,13 +86,33 @@ export default function App() {
   // Contrôler la santé des services
   const refreshHealth = async () => {
     try {
-      const resp = await fetch('/api/health');
-      if (resp.ok) {
-        const data = await resp.json();
-        setHealth(data);
-      }
+      const start = Date.now();
+      const resp = await fetch('https://albert.api.etalab.gouv.fr/v1/models', {
+        headers: { Authorization: `Bearer ${settings.albertApiKey}` },
+        signal: AbortSignal.timeout(6000),
+      });
+      const latencyMs = Date.now() - start;
+      setHealth({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        albert: {
+          connected: resp.ok,
+          latencyMs,
+          endpoint: 'https://albert.api.etalab.gouv.fr/v1',
+        },
+        supabase: {
+          connected: false,
+          latencyMs: 0,
+          url: 'N/A (mode statique)',
+        },
+      });
     } catch {
-      // Échec silencieux
+      setHealth({
+        status: 'degraded',
+        timestamp: new Date().toISOString(),
+        albert: { connected: false, latencyMs: 0, endpoint: 'https://albert.api.etalab.gouv.fr/v1' },
+        supabase: { connected: false, latencyMs: 0, url: 'N/A (mode statique)' },
+      });
     }
   };
 

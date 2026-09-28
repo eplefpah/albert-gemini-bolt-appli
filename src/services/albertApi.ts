@@ -1,5 +1,8 @@
 import { AlbertModel, ChatMessage, RagDocument } from '../types';
 import { AGROCAMPUS_KNOWLEDGE_DOCS } from '../data/agrocampusKnowledge';
+import { DEFAULT_SETTINGS } from './storageService';
+
+const ALBERT_BASE_URL = 'https://albert.api.etalab.gouv.fr/v1';
 
 const DEFAULT_MODELS: AlbertModel[] = [
   {
@@ -46,19 +49,21 @@ const DEFAULT_MODELS: AlbertModel[] = [
   },
 ];
 
+function resolveApiKey(customApiKey?: string): string {
+  return customApiKey || DEFAULT_SETTINGS.albertApiKey;
+}
+
 export async function getAlbertModels(customApiKey?: string): Promise<AlbertModel[]> {
   try {
-    const headers: Record<string, string> = {};
-    if (customApiKey) {
-      headers['x-albert-key'] = customApiKey;
-    }
-    const resp = await fetch('/api/albert/models', { headers });
+    const key = resolveApiKey(customApiKey);
+    const resp = await fetch(`${ALBERT_BASE_URL}/models`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
     if (!resp.ok) {
       return DEFAULT_MODELS;
     }
     const data = await resp.json();
     if (Array.isArray(data?.data) && data.data.length > 0) {
-      // Filtrer les modèles de génération textuelle et de chat
       const chatModels = data.data.filter(
         (m: any) =>
           m.type === 'text-generation' ||
@@ -98,16 +103,14 @@ export async function streamAlbertChat(
 ): Promise<void> {
   const startTime = Date.now();
   try {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (options.customApiKey) {
-      headers['x-albert-key'] = options.customApiKey;
-    }
+    const key = resolveApiKey(options.customApiKey);
 
-    const response = await fetch('/api/albert/chat/completions', {
+    const response = await fetch(`${ALBERT_BASE_URL}/chat/completions`, {
       method: 'POST',
-      headers,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
       body: JSON.stringify({
         model,
         messages,
@@ -160,14 +163,12 @@ export async function streamAlbertChat(
             const jsonStr = trimmed.slice(6);
             const parsed = JSON.parse(jsonStr);
 
-            // Traitement du texte
             const deltaContent = parsed.choices?.[0]?.delta?.content;
             if (deltaContent) {
               callbacks.onChunk(deltaContent);
               estimatedTokens += Math.ceil(deltaContent.length / 4);
             }
 
-            // Traitement de l'empreinte carbone et usage si fournis par l'API
             if (parsed.usage) {
               if (parsed.usage.completion_tokens) {
                 estimatedTokens = parsed.usage.completion_tokens;
@@ -193,7 +194,7 @@ export async function streamAlbertChat(
     });
     callbacks.onDone();
   } catch (err: any) {
-    callbacks.onError(err.message || 'Erreur de connexion à l’API Albert');
+    callbacks.onError(err.message || "Erreur de connexion à l'API Albert");
   }
 }
 
@@ -205,12 +206,14 @@ export async function searchRagCorpus(
   const normalized = query.toLowerCase();
   const results: RagDocument[] = [];
 
-  // 1. Tenter un appel à l'API Albert /search
   if (query.trim().length > 1) {
     try {
-      const resp = await fetch('/api/albert/search', {
+      const resp = await fetch(`${ALBERT_BASE_URL}/search`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${DEFAULT_SETTINGS.albertApiKey}`,
+        },
         body: JSON.stringify({
           query: query.trim(),
           collections: collectionIds && collectionIds.length > 0 ? collectionIds : undefined,
@@ -258,7 +261,6 @@ export async function searchRagCorpus(
     }
   }
 
-  // 2. Recherche sémantique / lexicale sur le corpus spécialisé Agrocampus & Enseignement Agricole
   const tokens = normalized.split(/\s+/).filter((t) => t.length > 2);
   const scoredAgro = AGROCAMPUS_KNOWLEDGE_DOCS.map((doc) => {
     let matchCount = 0;
@@ -284,7 +286,6 @@ export async function searchRagCorpus(
     return true;
   });
 
-  // Combiner les résultats officiels Albert et le corpus Agrocampus
   const allDocs = [...results, ...agroFiltered];
   return allDocs.sort((a, b) => b.score - a.score);
 }
@@ -297,10 +298,11 @@ export async function testAlbertConnection(key?: string): Promise<{
 }> {
   const start = Date.now();
   try {
-    const headers: Record<string, string> = {};
-    if (key) headers['x-albert-key'] = key;
+    const apiKey = resolveApiKey(key);
 
-    const resp = await fetch('/api/albert/models', { headers });
+    const resp = await fetch(`${ALBERT_BASE_URL}/models`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
     const latencyMs = Date.now() - start;
 
     if (!resp.ok) {
@@ -344,17 +346,26 @@ export async function transcribeAudio(
   segments?: any[];
   usage?: any;
 }> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (params.customApiKey) {
-    headers['x-albert-key'] = params.customApiKey;
-  }
+  const key = resolveApiKey(params.customApiKey);
 
-  const resp = await fetch('/api/albert/audio/transcriptions', {
+  const byteString = atob(params.audioBase64);
+  const bytes = new Uint8Array(byteString.length);
+  for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+  const blob = new Blob([bytes], { type: params.mimeType || 'audio/wav' });
+  const formData = new FormData();
+  formData.append('file', blob, params.fileName || 'recording.wav');
+  formData.append('model', params.model || 'whisper-large-v3');
+  if (params.language) formData.append('language', params.language);
+  if (params.prompt) formData.append('prompt', params.prompt);
+  if (params.response_format) formData.append('response_format', params.response_format);
+  if (typeof params.temperature === 'number') formData.append('temperature', String(params.temperature));
+
+  const resp = await fetch(`${ALBERT_BASE_URL}/audio/transcriptions`, {
     method: 'POST',
-    headers,
-    body: JSON.stringify(params),
+    headers: {
+      Authorization: `Bearer ${key}`,
+    },
+    body: formData,
   });
 
   if (!resp.ok) {
@@ -384,10 +395,11 @@ export async function transcribeAudio(
 
 // --- GESTION DES COLLECTIONS RAG ---
 export async function getAlbertCollections(customApiKey?: string): Promise<any[]> {
-  const headers: Record<string, string> = {};
-  if (customApiKey) headers['x-albert-key'] = customApiKey;
+  const key = resolveApiKey(customApiKey);
 
-  const resp = await fetch('/api/albert/collections', { headers });
+  const resp = await fetch(`${ALBERT_BASE_URL}/collections?limit=100&offset=0`, {
+    headers: { Authorization: `Bearer ${key}` },
+  });
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`Erreur récupération collections: ${err}`);
@@ -401,12 +413,14 @@ export async function createAlbertCollection(
   description?: string,
   customApiKey?: string
 ): Promise<{ id: number }> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (customApiKey) headers['x-albert-key'] = customApiKey;
+  const key = resolveApiKey(customApiKey);
 
-  const resp = await fetch('/api/albert/collections', {
+  const resp = await fetch(`${ALBERT_BASE_URL}/collections`, {
     method: 'POST',
-    headers,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+    },
     body: JSON.stringify({ name, description }),
   });
   if (!resp.ok) {
@@ -420,12 +434,11 @@ export async function deleteAlbertCollection(
   id: number,
   customApiKey?: string
 ): Promise<void> {
-  const headers: Record<string, string> = {};
-  if (customApiKey) headers['x-albert-key'] = customApiKey;
+  const key = resolveApiKey(customApiKey);
 
-  const resp = await fetch(`/api/albert/collections/${id}`, {
+  const resp = await fetch(`${ALBERT_BASE_URL}/collections/${id}`, {
     method: 'DELETE',
-    headers,
+    headers: { Authorization: `Bearer ${key}` },
   });
   if (!resp.ok) {
     const err = await resp.text();
@@ -438,14 +451,15 @@ export async function getAlbertDocuments(
   collectionId?: number,
   customApiKey?: string
 ): Promise<any[]> {
-  const headers: Record<string, string> = {};
-  if (customApiKey) headers['x-albert-key'] = customApiKey;
+  const key = resolveApiKey(customApiKey);
 
   const url = collectionId
-    ? `/api/albert/documents?collection_id=${collectionId}`
-    : `/api/albert/documents`;
+    ? `${ALBERT_BASE_URL}/documents?limit=50&collection_id=${collectionId}`
+    : `${ALBERT_BASE_URL}/documents?limit=50`;
 
-  const resp = await fetch(url, { headers });
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${key}` },
+  });
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`Erreur récupération documents: ${err}`);
@@ -468,13 +482,25 @@ export interface UploadDocumentParams {
 export async function uploadAlbertDocument(
   params: UploadDocumentParams
 ): Promise<{ id: number; name?: string }> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (params.customApiKey) headers['x-albert-key'] = params.customApiKey;
+  const key = resolveApiKey(params.customApiKey);
 
-  const resp = await fetch('/api/albert/documents', {
+  const byteString = atob(params.fileBase64);
+  const bytes = new Uint8Array(byteString.length);
+  for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+  const blob = new Blob([bytes], { type: params.mimeType || 'text/plain' });
+  const formData = new FormData();
+  formData.append('file', blob, params.fileName || 'document.txt');
+  formData.append('collection_id', String(params.collection_id));
+  if (params.name) formData.append('name', params.name);
+  if (params.chunk_size) formData.append('chunk_size', String(params.chunk_size));
+  if (params.chunk_overlap) formData.append('chunk_overlap', String(params.chunk_overlap));
+
+  const resp = await fetch(`${ALBERT_BASE_URL}/documents`, {
     method: 'POST',
-    headers,
-    body: JSON.stringify(params),
+    headers: {
+      Authorization: `Bearer ${key}`,
+    },
+    body: formData,
   });
 
   if (!resp.ok) {
@@ -497,12 +523,11 @@ export async function deleteAlbertDocument(
   id: number,
   customApiKey?: string
 ): Promise<void> {
-  const headers: Record<string, string> = {};
-  if (customApiKey) headers['x-albert-key'] = customApiKey;
+  const key = resolveApiKey(customApiKey);
 
-  const resp = await fetch(`/api/albert/documents/${id}`, {
+  const resp = await fetch(`${ALBERT_BASE_URL}/documents/${id}`, {
     method: 'DELETE',
-    headers,
+    headers: { Authorization: `Bearer ${key}` },
   });
   if (!resp.ok) {
     const err = await resp.text();
@@ -517,12 +542,14 @@ export async function searchAlbertOfficial(
   limit: number = 5,
   customApiKey?: string
 ): Promise<RagDocument[]> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (customApiKey) headers['x-albert-key'] = customApiKey;
+  const key = resolveApiKey(customApiKey);
 
-  const resp = await fetch('/api/albert/search', {
+  const resp = await fetch(`${ALBERT_BASE_URL}/search`, {
     method: 'POST',
-    headers,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+    },
     body: JSON.stringify({
       query,
       collection_ids: collectionIds,
@@ -552,4 +579,3 @@ export async function searchAlbertOfficial(
 
   return [];
 }
-

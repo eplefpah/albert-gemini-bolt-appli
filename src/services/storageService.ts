@@ -85,33 +85,15 @@ export function deleteLocalSession(sessionId: string): ConversationSession[] {
 export async function syncSessionToSupabase(
   session: ConversationSession
 ): Promise<{ success: boolean; statusText: string }> {
-  try {
-    const resp = await fetch('/api/supabase/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session, storageType: 'dual' }),
-    });
-
-    if (!resp.ok) {
-      return { success: false, statusText: `Erreur HTTP ${resp.status}` };
-    }
-
-    const data = await resp.json();
-    return {
-      success: true,
-      statusText: data.remoteSyncStatus === 'supabase_stored'
-        ? 'Enregistré sur Supabase'
-        : 'Sauvegardé dans le tampon serveur sécurisé',
-    };
-  } catch (err: any) {
-    return { success: false, statusText: err.message || 'Échec synchronisation' };
-  }
+  // En mode statique (sans serveur Express), on garde tout en local.
+  // Les sessions sont déjà sauvegardées dans localStorage par upsertLocalSession.
+  return { success: true, statusText: 'Sauvegardé localement' };
 }
 
 export async function testSupabaseConnection(
-  url?: string,
-  user?: string,
-  pass?: string
+  _url?: string,
+  _user?: string,
+  _pass?: string
 ): Promise<{
   connected: boolean;
   statusCode: number;
@@ -119,32 +101,13 @@ export async function testSupabaseConnection(
   authenticated: boolean;
   error?: string;
 }> {
-  try {
-    const params = new URLSearchParams();
-    if (url) params.append('url', url);
-    if (user) params.append('user', user);
-    if (pass) params.append('pass', pass);
-
-    const resp = await fetch(`/api/supabase/status?${params.toString()}`);
-    if (!resp.ok) {
-      return {
-        connected: false,
-        statusCode: resp.status,
-        latencyMs: 0,
-        authenticated: false,
-        error: `Erreur serveur ${resp.status}`,
-      };
-    }
-    return await resp.json();
-  } catch (err: any) {
-    return {
-      connected: false,
-      statusCode: 0,
-      latencyMs: 0,
-      authenticated: false,
-      error: err.message || 'Serveur Supabase inaccessible',
-    };
-  }
+  return {
+    connected: false,
+    statusCode: 0,
+    latencyMs: 0,
+    authenticated: false,
+    error: 'Serveur proxy non disponible en mode statique',
+  };
 }
 
 // --- EXPORT COMPATIBLE IONOS /data/ ---
