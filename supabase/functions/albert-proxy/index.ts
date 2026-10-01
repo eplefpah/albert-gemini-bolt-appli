@@ -16,7 +16,15 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const customKey = req.headers.get("x-albert-key") || DEFAULT_ALBERT_KEY;
 
-    const path = url.pathname.replace(/^\/functions\/v1\/albert-proxy/, "");
+    // Debug: return the raw URL to see what the gateway passes
+    const debug = url.searchParams.get("debug");
+    if (debug === "1") {
+      return new Response(JSON.stringify({ pathname: url.pathname, search: url.search, fullUrl: req.url }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const path = url.pathname.replace(/^\/functions\/v1\/albert-proxy\/?/, "/");
     const targetUrl = `${ALBERT_BASE_URL}${path}${url.search}`;
 
     const fetchHeaders: Record<string, string> = {
