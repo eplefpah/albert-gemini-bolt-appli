@@ -1,8 +1,9 @@
-import { AlbertModel, ChatMessage, RagDocument } from '../types';
+import { AlbertModel, RagDocument } from '../types';
 import { AGROCAMPUS_KNOWLEDGE_DOCS } from '../data/agrocampusKnowledge';
-import { DEFAULT_SETTINGS } from './storageService';
 
-const PROXY_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/albert-proxy`;
+// Toutes les requêtes passent par le proxy PHP déposé avec l'application
+// (api/albert.php), qui ajoute la clé API Albert côté serveur.
+const PROXY_URL = 'api/albert.php';
 
 const DEFAULT_MODELS: AlbertModel[] = [
   {
@@ -49,30 +50,80 @@ const DEFAULT_MODELS: AlbertModel[] = [
   },
 ];
 
-function buildHeaders(customApiKey?: string, extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { ...extra };
-  if (customApiKey) {
-    headers['x-albert-key'] = customApiKey;
-  }
-  return headers;
+interface AlbertRequestOptions {
+  method?: 'GET' | 'POST' | 'DELETE';
+  json?: unknown;
+  formData?: FormData;
+  params?: Record<string, string | number | undefined>;
+  // Clé personnelle saisie dans les paramètres ; vide = clé configurée sur le serveur.
+  apiKey?: string;
+  signal?: AbortSignal;
 }
+
+export function albertFetch(endpoint: string, options: AlbertRequestOptions = {}): Promise<Response> {
+  const search = new URLSearchParams({ endpoint });
+  for (const [key, value] of Object.entries(options.params || {})) {
+    if (value !== undefined) search.set(key, String(value));
+  }
+
+  const headers: Record<string, string> = {};
+  if (options.apiKey?.trim()) {
+    headers['x-albert-key'] = options.apiKey.trim();
+  }
+
+  let body: BodyInit | undefined;
+  if (options.json !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify(options.json);
+  } else if (options.formData) {
+    body = options.formData;
+  }
+
+  return fetch(`${PROXY_URL}?${search.toString()}`, {
+    method: options.method || (body ? 'POST' : 'GET'),
+    headers,
+    body,
+    signal: options.signal,
+  });
+}
+
+export async function readAlbertError(resp: Response): Promise<string> {
+  const text = (await resp.text()).trim();
+  try {
+    const parsed = JSON.parse(text);
+    if (typeof parsed.error === 'string') return parsed.error;
+    if (parsed.error?.message) return parsed.error.message;
+    if (typeof parsed.detail === 'string') return parsed.detail;
+    if (parsed.detail) return JSON.stringify(parsed.detail);
+    if (typeof parsed.message === 'string') return parsed.message;
+  } catch {
+    // Réponse non JSON
+  }
+  if (text.startsWith('<')) {
+    return `Erreur HTTP ${resp.status} : le proxy api/albert.php est introuvable ou PHP n'est pas actif sur l'hébergement.`;
+  }
+  return text ? text.slice(0, 300) : `Erreur HTTP ${resp.status}`;
+}
+
+function base64ToBlob(base64: string, mimeType: string): Blob {
+  const byteString = atob(base64);
+  const bytes = new Uint8Array(byteString.length);
+  for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
+
+const CHAT_MODEL_TYPES = ['text-generation', 'image-text-to-text'];
 
 export async function getAlbertModels(customApiKey?: string): Promise<AlbertModel[]> {
   try {
-    const resp = await fetch(`${PROXY_BASE}/models`, {
-      headers: buildHeaders(customApiKey),
-    });
+    const resp = await albertFetch('models', { apiKey: customApiKey });
     if (!resp.ok) {
       return DEFAULT_MODELS;
     }
     const data = await resp.json();
     if (Array.isArray(data?.data) && data.data.length > 0) {
-      const chatModels = data.data.filter(
-        (m: any) =>
-          m.type === 'text-generation' ||
-          m.type === 'image-text-to-text' ||
-          !m.type?.includes('embeddings')
-      );
+      // Seuls les modèles conversationnels (pas la transcription ni les embeddings).
+      const chatModels = data.data.filter((m: any) => !m.type || CHAT_MODEL_TYPES.includes(m.type));
       return chatModels.length > 0 ? chatModels : data.data;
     }
     return DEFAULT_MODELS;
@@ -106,29 +157,35 @@ export async function streamAlbertChat(
 ): Promise<void> {
   const startTime = Date.now();
   try {
-    const response = await fetch(`${PROXY_BASE}/chat/completions`, {
-      method: 'POST',
-      headers: buildHeaders(options.customApiKey, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
+    const response = await albertFetch('chat/completions', {
+      apiKey: options.customApiKey,
+      json: {
         model,
         messages,
         temperature: options.temperature ?? 0.7,
         max_tokens: options.maxTokens ?? 2048,
         stream: true,
-      }),
+      },
     });
 
     if (!response.ok) {
-      const errBody = await response.text();
-      let errorMsg = `Erreur HTTP ${response.status}`;
-      try {
-        const parsed = JSON.parse(errBody);
-        if (parsed.error?.message) errorMsg = parsed.error.message;
-        else if (typeof parsed.error === 'string') errorMsg = parsed.error;
-      } catch {
-        errorMsg = errBody || errorMsg;
-      }
-      callbacks.onError(errorMsg);
+      callbacks.onError(await readAlbertError(response));
+      return;
+    }
+
+    // Réponse complète (non streamée) : on l'affiche d'un bloc.
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      const data = await response.json();
+      const content = data?.choices?.[0]?.message?.content || '';
+      if (content) callbacks.onChunk(content);
+      const tokens = data?.usage?.completion_tokens || Math.ceil(content.length / 4);
+      callbacks.onUsage?.({
+        tokens,
+        latencyMs: Date.now() - startTime,
+        carbonKwh: tokens * 0.00000008,
+        carbonCo2: tokens * 0.0000000045,
+      });
+      callbacks.onDone();
       return;
     }
 
@@ -199,22 +256,22 @@ export async function streamAlbertChat(
 export async function searchRagCorpus(
   query: string,
   categoryFilter?: string,
-  collectionIds?: number[]
+  collectionIds?: number[],
+  customApiKey?: string
 ): Promise<RagDocument[]> {
   const normalized = query.toLowerCase();
   const results: RagDocument[] = [];
 
   if (query.trim().length > 1) {
     try {
-      const resp = await fetch(`${PROXY_BASE}/search`, {
-        method: 'POST',
-        headers: buildHeaders(DEFAULT_SETTINGS.albertApiKey, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
+      const resp = await albertFetch('search', {
+        apiKey: customApiKey,
+        json: {
           query: query.trim(),
           collections: collectionIds && collectionIds.length > 0 ? collectionIds : undefined,
           k: 6,
           method: 'semantic',
-        }),
+        },
       });
 
       if (resp.ok) {
@@ -293,14 +350,11 @@ export async function testAlbertConnection(key?: string): Promise<{
 }> {
   const start = Date.now();
   try {
-    const resp = await fetch(`${PROXY_BASE}/models`, {
-      headers: buildHeaders(key),
-    });
+    const resp = await albertFetch('models', { apiKey: key, signal: AbortSignal.timeout(10000) });
     const latencyMs = Date.now() - start;
 
     if (!resp.ok) {
-      const err = await resp.text();
-      return { ok: false, latencyMs, modelsCount: 0, error: err };
+      return { ok: false, latencyMs, modelsCount: 0, error: await readAlbertError(resp) };
     }
 
     const data = await resp.json();
@@ -339,10 +393,7 @@ export async function transcribeAudio(
   segments?: any[];
   usage?: any;
 }> {
-  const byteString = atob(params.audioBase64);
-  const bytes = new Uint8Array(byteString.length);
-  for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
-  const blob = new Blob([bytes], { type: params.mimeType || 'audio/wav' });
+  const blob = base64ToBlob(params.audioBase64, params.mimeType || 'audio/wav');
   const formData = new FormData();
   formData.append('file', blob, params.fileName || 'recording.wav');
   formData.append('model', params.model || 'whisper-large-v3');
@@ -351,24 +402,13 @@ export async function transcribeAudio(
   if (params.response_format) formData.append('response_format', params.response_format);
   if (typeof params.temperature === 'number') formData.append('temperature', String(params.temperature));
 
-  const resp = await fetch(`${PROXY_BASE}/audio/transcriptions`, {
-    method: 'POST',
-    headers: buildHeaders(params.customApiKey),
-    body: formData,
+  const resp = await albertFetch('audio/transcriptions', {
+    apiKey: params.customApiKey,
+    formData,
   });
 
   if (!resp.ok) {
-    const errText = await resp.text();
-    let errorMsg = `Erreur HTTP ${resp.status}`;
-    try {
-      const parsed = JSON.parse(errText);
-      if (parsed.error?.message) errorMsg = parsed.error.message;
-      else if (parsed.error) errorMsg = parsed.error;
-      else if (parsed.detail) errorMsg = JSON.stringify(parsed.detail);
-    } catch {
-      errorMsg = errText || errorMsg;
-    }
-    throw new Error(errorMsg);
+    throw new Error(await readAlbertError(resp));
   }
 
   const data = await resp.json();
@@ -384,12 +424,12 @@ export async function transcribeAudio(
 
 // --- GESTION DES COLLECTIONS RAG ---
 export async function getAlbertCollections(customApiKey?: string): Promise<any[]> {
-  const resp = await fetch(`${PROXY_BASE}/collections?limit=100&offset=0`, {
-    headers: buildHeaders(customApiKey),
+  const resp = await albertFetch('collections', {
+    apiKey: customApiKey,
+    params: { limit: 100, offset: 0 },
   });
   if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Erreur récupération collections: ${err}`);
+    throw new Error(`Erreur récupération collections : ${await readAlbertError(resp)}`);
   }
   const data = await resp.json();
   return Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
@@ -400,14 +440,12 @@ export async function createAlbertCollection(
   description?: string,
   customApiKey?: string
 ): Promise<{ id: number }> {
-  const resp = await fetch(`${PROXY_BASE}/collections`, {
-    method: 'POST',
-    headers: buildHeaders(customApiKey, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ name, description }),
+  const resp = await albertFetch('collections', {
+    apiKey: customApiKey,
+    json: { name, description },
   });
   if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Erreur création collection: ${err}`);
+    throw new Error(`Erreur création collection : ${await readAlbertError(resp)}`);
   }
   return await resp.json();
 }
@@ -416,13 +454,12 @@ export async function deleteAlbertCollection(
   id: number,
   customApiKey?: string
 ): Promise<void> {
-  const resp = await fetch(`${PROXY_BASE}/collections/${id}`, {
+  const resp = await albertFetch(`collections/${id}`, {
     method: 'DELETE',
-    headers: buildHeaders(customApiKey),
+    apiKey: customApiKey,
   });
   if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Erreur suppression collection: ${err}`);
+    throw new Error(`Erreur suppression collection : ${await readAlbertError(resp)}`);
   }
 }
 
@@ -431,16 +468,12 @@ export async function getAlbertDocuments(
   collectionId?: number,
   customApiKey?: string
 ): Promise<any[]> {
-  const url = collectionId
-    ? `${PROXY_BASE}/documents?limit=50&collection_id=${collectionId}`
-    : `${PROXY_BASE}/documents?limit=50`;
-
-  const resp = await fetch(url, {
-    headers: buildHeaders(customApiKey),
+  const resp = await albertFetch('documents', {
+    apiKey: customApiKey,
+    params: { limit: 50, collection_id: collectionId || undefined },
   });
   if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Erreur récupération documents: ${err}`);
+    throw new Error(`Erreur récupération documents : ${await readAlbertError(resp)}`);
   }
   const data = await resp.json();
   return Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
@@ -460,10 +493,7 @@ export interface UploadDocumentParams {
 export async function uploadAlbertDocument(
   params: UploadDocumentParams
 ): Promise<{ id: number; name?: string }> {
-  const byteString = atob(params.fileBase64);
-  const bytes = new Uint8Array(byteString.length);
-  for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
-  const blob = new Blob([bytes], { type: params.mimeType || 'text/plain' });
+  const blob = base64ToBlob(params.fileBase64, params.mimeType || 'text/plain');
   const formData = new FormData();
   formData.append('file', blob, params.fileName || 'document.txt');
   formData.append('collection_id', String(params.collection_id));
@@ -471,23 +501,13 @@ export async function uploadAlbertDocument(
   if (params.chunk_size) formData.append('chunk_size', String(params.chunk_size));
   if (params.chunk_overlap) formData.append('chunk_overlap', String(params.chunk_overlap));
 
-  const resp = await fetch(`${PROXY_BASE}/documents`, {
-    method: 'POST',
-    headers: buildHeaders(params.customApiKey),
-    body: formData,
+  const resp = await albertFetch('documents', {
+    apiKey: params.customApiKey,
+    formData,
   });
 
   if (!resp.ok) {
-    const errText = await resp.text();
-    let errorMsg = `Erreur HTTP ${resp.status}`;
-    try {
-      const parsed = JSON.parse(errText);
-      if (parsed.error) errorMsg = parsed.error;
-      else if (parsed.detail) errorMsg = JSON.stringify(parsed.detail);
-    } catch {
-      errorMsg = errText || errorMsg;
-    }
-    throw new Error(errorMsg);
+    throw new Error(await readAlbertError(resp));
   }
 
   return await resp.json();
@@ -497,13 +517,12 @@ export async function deleteAlbertDocument(
   id: number,
   customApiKey?: string
 ): Promise<void> {
-  const resp = await fetch(`${PROXY_BASE}/documents/${id}`, {
+  const resp = await albertFetch(`documents/${id}`, {
     method: 'DELETE',
-    headers: buildHeaders(customApiKey),
+    apiKey: customApiKey,
   });
   if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Erreur suppression document: ${err}`);
+    throw new Error(`Erreur suppression document : ${await readAlbertError(resp)}`);
   }
 }
 
@@ -514,20 +533,19 @@ export async function searchAlbertOfficial(
   limit: number = 5,
   customApiKey?: string
 ): Promise<RagDocument[]> {
-  const resp = await fetch(`${PROXY_BASE}/search`, {
-    method: 'POST',
-    headers: buildHeaders(customApiKey, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
+  const resp = await albertFetch('search', {
+    apiKey: customApiKey,
+    json: {
       query,
       collection_ids: collectionIds,
       limit,
       method: 'semantic',
       score_threshold: 0,
-    }),
+    },
   });
 
   if (!resp.ok) {
-    throw new Error(`Erreur HTTP ${resp.status} lors de la recherche`);
+    throw new Error(`Erreur lors de la recherche : ${await readAlbertError(resp)}`);
   }
 
   const data = await resp.json();

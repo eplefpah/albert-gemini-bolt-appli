@@ -10,7 +10,6 @@ import {
   Sliders,
   ChevronDown,
   ChevronUp,
-  CloudUpload,
   Cpu,
   Leaf,
   Clock,
@@ -35,10 +34,7 @@ import {
   UserProfileConfig,
 } from '../types';
 import { streamAlbertChat, transcribeAudio } from '../services/albertApi';
-import {
-  syncSessionToSupabase,
-  exportSingleSessionMarkdown,
-} from '../services/storageService';
+import { exportSingleSessionMarkdown } from '../services/storageService';
 import { parseDocumentFile, formatFileSize } from '../utils/documentParser';
 import { MarkdownViewer } from './MarkdownViewer';
 
@@ -76,7 +72,6 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
   const [isStreaming, setIsStreaming] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-  const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [rawModeMessageIds, setRawModeMessageIds] = useState<Record<string, boolean>>({});
 
   const toggleRawMode = (id: string) => {
@@ -385,15 +380,6 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
               updatedAt: Date.now(),
             };
             onUpdateSession(finalizedSession);
-
-            if (settings.autoSync) {
-              syncSessionToSupabase(finalizedSession).then((res) => {
-                if (res.success) {
-                  setSyncStatus('Synchronisé');
-                  setTimeout(() => setSyncStatus(null), 3000);
-                }
-              });
-            }
           }
         },
         onError: (err) => {
@@ -423,14 +409,6 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     navigator.clipboard.writeText(content);
     setCopiedMessageId(id);
     setTimeout(() => setCopiedMessageId(null), 2000);
-  };
-
-  const handleManualSync = async () => {
-    if (!currentSession) return;
-    setSyncStatus('En cours...');
-    const res = await syncSessionToSupabase(currentSession);
-    setSyncStatus(res.statusText);
-    setTimeout(() => setSyncStatus(null), 3500);
   };
 
   const quickPrompts = userProfile?.quickPrompts || [
@@ -498,9 +476,6 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
         {/* Pied de liste : État et persistance */}
         <div className="p-3 border-t border-slate-200 bg-slate-50/50 flex items-center justify-between text-[11px] text-slate-500">
           <span>{sessions.length} session(s) locale(s)</span>
-          {syncStatus && (
-            <span className="text-blue-700 font-medium">{syncStatus}</span>
-          )}
         </div>
       </aside>
 
@@ -565,18 +540,6 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
               >
                 <Download className="w-3.5 h-3.5" />
                 <span className="hidden md:inline">Export .md</span>
-              </button>
-            )}
-
-            {/* Bouton Synchroniser Supabase */}
-            {currentSession && (
-              <button
-                onClick={handleManualSync}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
-                title="Synchroniser vers votre instance Supabase (185.219.215.120:8007)"
-              >
-                <CloudUpload className="w-3.5 h-3.5 text-blue-600" />
-                <span className="hidden md:inline">Sync Supabase</span>
               </button>
             )}
           </div>

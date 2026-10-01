@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { ChatStudio } from './components/ChatStudio';
 import { AgrocampusHub } from './components/AgrocampusHub';
@@ -17,14 +17,14 @@ import {
   UserProfileId,
 } from './types';
 import { USER_PROFILES, DEFAULT_USER_PROFILE_ID } from './data/userProfiles';
-import { getAlbertModels } from './services/albertApi';
+import { getAlbertModels, testAlbertConnection } from './services/albertApi';
 import {
   loadLocalSessions,
   upsertLocalSession,
   deleteLocalSession,
   loadUserSettings,
   saveUserSettings,
-  exportToIonosDataFile,
+  exportSessionsToJson,
 } from './services/storageService';
 
 export default function App() {
@@ -48,7 +48,9 @@ export default function App() {
     localStorage.setItem('agrocampus_active_profile', id);
   };
 
-  const [settings, setSettings] = useState<UserSettings>(loadUserSettings());
+  const [settings, setSettings] = useState<UserSettings>(loadUserSettings);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const [models, setModels] = useState<AlbertModel[]>([]);
   const [sessions, setSessions] = useState<ConversationSession[]>(() => {
     const loaded = loadLocalSessions();
@@ -78,42 +80,25 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Charger les modèles réels d'Albert DINUM
-  const refreshModels = async (key?: string) => {
-    const list = await getAlbertModels(key || settings.albertApiKey);
+  const refreshModels = async (key: string = settingsRef.current.albertApiKey) => {
+    const list = await getAlbertModels(key);
     setModels(list);
   };
 
-  // Contrôler la santé des services
-  const refreshHealth = async () => {
-    try {
-      const start = Date.now();
-      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/albert-proxy/models`, {
-        headers: { 'x-albert-key': settings.albertApiKey },
-        signal: AbortSignal.timeout(6000),
-      });
-      const latencyMs = Date.now() - start;
-      setHealth({
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        albert: {
-          connected: resp.ok,
-          latencyMs,
-          endpoint: 'albert-proxy (Supabase Edge Function)',
-        },
-        supabase: {
-          connected: false,
-          latencyMs: 0,
-          url: 'N/A (mode statique)',
-        },
-      });
-    } catch {
-      setHealth({
-        status: 'degraded',
-        timestamp: new Date().toISOString(),
-        albert: { connected: false, latencyMs: 0, endpoint: 'albert-proxy (Supabase Edge Function)' },
-        supabase: { connected: false, latencyMs: 0, url: 'N/A (mode statique)' },
-      });
-    }
+  // Contrôler la connexion à Albert (via le proxy api/albert.php)
+  const refreshHealth = async (key: string = settingsRef.current.albertApiKey) => {
+    const res = await testAlbertConnection(key);
+    setHealth({
+      status: res.ok ? 'ok' : 'degraded',
+      timestamp: new Date().toISOString(),
+      albert: {
+        connected: res.ok,
+        latencyMs: res.latencyMs,
+        endpoint: 'api/albert.php',
+        modelsCount: res.modelsCount,
+        error: res.error,
+      },
+    });
   };
 
   useEffect(() => {
@@ -197,7 +182,7 @@ Peux-tu m'expliquer précisément comment cette réglementation ou ces dispositi
     setSettings(newSettings);
     saveUserSettings(newSettings);
     refreshModels(newSettings.albertApiKey);
-    refreshHealth();
+    refreshHealth(newSettings.albertApiKey);
   };
 
   return (
@@ -206,9 +191,9 @@ Peux-tu m'expliquer précisément comment cette réglementation ou ces dispositi
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
         health={health}
-        onRefreshHealth={refreshHealth}
+        onRefreshHealth={() => refreshHealth()}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onExportIonos={() => exportToIonosDataFile(sessions)}
+        onExportSessions={() => exportSessionsToJson(sessions)}
         userProfile={activeProfile}
         onSelectProfile={handleSelectProfile}
       />
@@ -265,7 +250,7 @@ Peux-tu m'expliquer précisément comment cette réglementation ou ces dispositi
             models={models}
             health={health}
             settings={settings}
-            onRefreshHealth={refreshHealth}
+            onRefreshHealth={() => refreshHealth()}
           />
         )}
 
@@ -278,12 +263,13 @@ Peux-tu m'expliquer précisément comment cette réglementation ou ces dispositi
         )}
       </div>
 
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        settings={settings}
-        onSaveSettings={handleSaveSettings}
-      />
+      {isSettingsOpen && (
+        <SettingsModal
+          onClose={() => setIsSettingsOpen(false)}
+          settings={settings}
+          onSaveSettings={handleSaveSettings}
+        />
+      )}
     </div>
   );
 }
