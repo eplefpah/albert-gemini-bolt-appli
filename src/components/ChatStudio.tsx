@@ -180,32 +180,21 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
           const finalBlob = new Blob(dictationChunksRef.current, { type: mimeType });
           setIsTranscribingVoice(true);
           try {
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-              try {
-                const dataUrl = reader.result as string;
-                const base64 = dataUrl.split(',')[1];
-                const res = await transcribeAudio({
-                  audioBase64: base64,
-                  fileName: 'dictation.webm',
-                  mimeType,
-                  model: 'whisper-large-v3',
-                  language: 'fr',
-                  customApiKey: settings.albertApiKey,
-                });
-                if (res.text && res.text.trim()) {
-                  setInputMessage((prev) =>
-                    prev ? prev.trim() + ' ' + res.text.trim() : res.text.trim()
-                  );
-                }
-              } catch (err: any) {
-                console.error('Erreur transcription vocale chat:', err);
-              } finally {
-                setIsTranscribingVoice(false);
-              }
-            };
-            reader.readAsDataURL(finalBlob);
-          } catch {
+            const res = await transcribeAudio({
+              audio: finalBlob,
+              fileName: 'dictation.webm',
+              model: 'whisper-large-v3',
+              language: 'fr',
+              customApiKey: settings.albertApiKey,
+            });
+            if (res.text && res.text.trim()) {
+              setInputMessage((prev) =>
+                prev ? prev.trim() + ' ' + res.text.trim() : res.text.trim()
+              );
+            }
+          } catch (err: any) {
+            console.error('Erreur transcription vocale chat:', err);
+          } finally {
             setIsTranscribingVoice(false);
           }
         };

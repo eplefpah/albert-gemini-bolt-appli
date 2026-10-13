@@ -29,6 +29,11 @@ interface AudioTranscriptionStudioProps {
 
 const STORAGE_KEY_AUDIO_HISTORY = 'albert_transcription_history';
 
+// Taille maximale acceptée par l'API Albert pour la transcription.
+const MAX_AUDIO_FILE_MB = 100;
+const MAX_AUDIO_FILE_BYTES = MAX_AUDIO_FILE_MB * 1024 * 1024;
+const FILE_TOO_LARGE_MESSAGE = `Le fichier dépasse la limite maximale de ${MAX_AUDIO_FILE_MB} Mo d’Albert API.`;
+
 export const AudioTranscriptionStudio: React.FC<AudioTranscriptionStudioProps> = ({
   settings,
   onSendToChat,
@@ -159,8 +164,8 @@ export const AudioTranscriptionStudio: React.FC<AudioTranscriptionStudioProps> =
     setErrorMessage(null);
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      if (file.size > 20 * 1024 * 1024) {
-        setErrorMessage('Le fichier dépasse la limite maximale de 20 Mo d’Albert API.');
+      if (file.size > MAX_AUDIO_FILE_BYTES) {
+        setErrorMessage(FILE_TOO_LARGE_MESSAGE);
         return;
       }
       setSelectedFile(file);
@@ -170,25 +175,15 @@ export const AudioTranscriptionStudio: React.FC<AudioTranscriptionStudioProps> =
     }
   };
 
-  // --- CONVERTIR UN BLOB EN BASE64 ---
-  const blobToBase64 = (blob: Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const dataUrl = reader.result as string;
-        const base64 = dataUrl.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  };
-
   // --- LANCER LA TRANSCRIPTION SUR L'API ALBERT DINUM ---
   const handleRunTranscription = async () => {
     const targetBlob = activeMode === 'record' ? audioBlob : selectedFile;
     if (!targetBlob) {
       setErrorMessage('Veuillez d’abord enregistrer un message vocal ou choisir un fichier audio.');
+      return;
+    }
+    if (targetBlob.size > MAX_AUDIO_FILE_BYTES) {
+      setErrorMessage(FILE_TOO_LARGE_MESSAGE);
       return;
     }
 
@@ -197,16 +192,13 @@ export const AudioTranscriptionStudio: React.FC<AudioTranscriptionStudioProps> =
     setCurrentResult(null);
 
     try {
-      const audioBase64 = await blobToBase64(targetBlob);
       const fileName =
         selectedFile?.name ||
         (activeMode === 'record' ? 'enregistrement_micro.wav' : 'audio.mp3');
-      const mimeType = targetBlob.type || 'audio/wav';
 
       const res = await transcribeAudio({
-        audioBase64,
+        audio: targetBlob,
         fileName,
-        mimeType,
         model: 'whisper-large-v3',
         language: language === 'auto' ? undefined : language,
         prompt: contextPrompt || undefined,
@@ -444,7 +436,7 @@ Transforme ce contenu en une fiche pédagogique pour les apprenants (Bac Pro ou 
                     {selectedFile ? selectedFile.name : 'Sélectionnez ou déposez votre fichier audio'}
                   </h3>
                   <p className="text-xs text-slate-500 mt-1">
-                    Formats supportés : MP3, WAV, M4A, OGG, WebM (jusqu’à 20 Mo)
+                    Formats supportés : MP3, WAV, M4A, OGG, WebM (jusqu’à {MAX_AUDIO_FILE_MB} Mo)
                   </p>
                   {selectedFile && (
                     <span className="inline-block mt-3 px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-[11px] font-mono">

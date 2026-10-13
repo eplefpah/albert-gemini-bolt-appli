@@ -99,6 +99,9 @@ export async function readAlbertError(resp: Response): Promise<string> {
   } catch {
     // Réponse non JSON
   }
+  if (resp.status === 413) {
+    return "Fichier trop volumineux pour l'hébergement : vérifiez upload_max_filesize et post_max_size (fichier api/.user.ini).";
+  }
   if (text.startsWith('<')) {
     return `Erreur HTTP ${resp.status} : le proxy api/albert.php est introuvable ou PHP n'est pas actif sur l'hébergement.`;
   }
@@ -372,9 +375,9 @@ export async function testAlbertConnection(key?: string): Promise<{
 
 // --- TRANSCRIPTION AUDIO (Whisper Large V3) ---
 export interface TranscribeAudioParams {
-  audioBase64: string;
+  // Envoyé tel quel, sans passer par du base64 : les fichiers peuvent atteindre 100 Mo.
+  audio: Blob;
   fileName?: string;
-  mimeType?: string;
   model?: string;
   language?: string;
   prompt?: string;
@@ -393,9 +396,8 @@ export async function transcribeAudio(
   segments?: any[];
   usage?: any;
 }> {
-  const blob = base64ToBlob(params.audioBase64, params.mimeType || 'audio/wav');
   const formData = new FormData();
-  formData.append('file', blob, params.fileName || 'recording.wav');
+  formData.append('file', params.audio, params.fileName || 'recording.wav');
   formData.append('model', params.model || 'whisper-large-v3');
   if (params.language) formData.append('language', params.language);
   if (params.prompt) formData.append('prompt', params.prompt);

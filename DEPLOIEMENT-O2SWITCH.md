@@ -21,7 +21,7 @@ dist/
 ├── assets/            ← JS, CSS et lecteur PDF
 └── api/
     ├── .htaccess      ← protège la configuration
-    ├── .user.ini      ← taille maximale des fichiers envoyés (64 Mo)
+    ├── .user.ini      ← taille maximale des fichiers envoyés (100 Mo)
     ├── albert.php     ← proxy vers l'API Albert
     └── config.example.php
 ```
@@ -66,6 +66,7 @@ Les anciens fichiers de `assets/` peuvent être supprimés.
 | « Aucune clé API Albert configurée » | `api/config.php` absent ou clé vide |
 | « le proxy api/albert.php est introuvable » | dossier `api/` non déposé à côté de `index.html` |
 | Erreur 401 | clé API invalide ou expirée |
+| « Fichier trop volumineux pour l'hébergement » | `api/.user.ini` absent ou pas encore pris en compte (jusqu'à 5 min) ; sinon, régler `upload_max_filesize` (100M) et `post_max_size` (110M) dans la configuration PHP du cPanel |
 | Réponses affichées d'un bloc au lieu de mot à mot | compression activée par l'hébergeur (sans gravité) |
 | Micro inaccessible | le site doit être ouvert en HTTPS |
 
