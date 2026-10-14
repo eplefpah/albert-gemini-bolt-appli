@@ -7,3 +7,5 @@ coverage/
 .env*
 !.env.example
 .env
+# Clé API du proxy PHP (à créer sur le serveur à partir de config.example.php)
+public/api/config.php

@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   Activity,
   Server,
-  Database,
   Terminal,
   RefreshCw,
   Copy,
@@ -14,6 +13,7 @@ import {
   Send,
 } from 'lucide-react';
 import { AlbertModel, ApiHealthStatus, UserSettings } from '../types';
+import { albertFetch } from '../services/albertApi';
 
 interface ApiDiagnosticsProps {
   models: AlbertModel[];
@@ -35,8 +35,11 @@ export const ApiDiagnostics: React.FC<ApiDiagnosticsProps> = ({
   const [testLatency, setTestLatency] = useState<number | null>(null);
   const [copiedCurl, setCopiedCurl] = useState(false);
 
+  const albertOk = health?.albert.connected ?? false;
+  const usesServerKey = !settings.albertApiKey.trim();
+
   const curlCommand = `curl -X POST "https://albert.api.etalab.gouv.fr/v1/chat/completions" \\
-  -H "Authorization: Bearer ${settings.albertApiKey}" \\
+  -H "Authorization: Bearer ${usesServerKey ? 'VOTRE_CLE_API_ALBERT' : settings.albertApiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "${testModel}",
@@ -49,19 +52,21 @@ export const ApiDiagnostics: React.FC<ApiDiagnosticsProps> = ({
     setTestResponse(null);
     const start = Date.now();
     try {
-      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/albert-proxy/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-albert-key': settings.albertApiKey,
-        },
-        body: JSON.stringify({
+      const resp = await albertFetch('chat/completions', {
+        apiKey: settings.albertApiKey,
+        json: {
           model: testModel,
           messages: [{ role: 'user', content: testPrompt }],
           max_tokens: 300,
-        }),
+        },
       });
-      const data = await resp.json();
+      const text = await resp.text();
+      let data: unknown = text;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // Réponse non JSON affichée telle quelle
+      }
       setTestLatency(Date.now() - start);
       setTestResponse({
         status: resp.status,
@@ -116,10 +121,17 @@ export const ApiDiagnostics: React.FC<ApiDiagnosticsProps> = ({
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
               Albert API DINUM
             </span>
-            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Opérationnel</span>
-            </div>
+            {albertOk ? (
+              <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span>Opérationnel</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-xs font-medium text-red-700 bg-red-50 px-2 py-0.5 rounded border border-red-200">
+                <span className="w-2 h-2 rounded-full bg-red-500" />
+                <span>{health ? 'Injoignable' : 'Vérification...'}</span>
+              </div>
+            )}
           </div>
           <div className="space-y-1.5 text-xs text-slate-600 font-mono">
             <div className="flex justify-between">
@@ -131,7 +143,7 @@ export const ApiDiagnostics: React.FC<ApiDiagnosticsProps> = ({
             <div className="flex justify-between">
               <span>Latence :</span>
               <span className="text-slate-900 font-semibold tabular-nums">
-                {health?.albert.latencyMs ?? 180} ms
+                {health ? `${health.albert.latencyMs} ms` : '—'}
               </span>
             </div>
             <div className="flex justify-between">
@@ -143,33 +155,38 @@ export const ApiDiagnostics: React.FC<ApiDiagnosticsProps> = ({
           </div>
         </div>
 
-        {/* Supabase Privé */}
+        {/* Proxy PHP hébergé avec l'application */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Base Supabase Privée
+              Proxy de l’hébergement
             </span>
             <div className="flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-              <Database className="w-3.5 h-3.5" />
-              <span>Proxy Actif</span>
+              <Server className="w-3.5 h-3.5" />
+              <span>PHP</span>
             </div>
           </div>
           <div className="space-y-1.5 text-xs text-slate-600 font-mono">
             <div className="flex justify-between">
               <span>Adresse :</span>
-              <span className="text-slate-900 truncate max-w-[180px]">
-                185.219.215.120:8007
+              <span className="text-slate-900 truncate max-w-[180px]">api/albert.php</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Clé utilisée :</span>
+              <span className="text-slate-900">
+                {usesServerKey ? 'Serveur (config.php)' : 'Personnelle'}
               </span>
             </div>
             <div className="flex justify-between">
-              <span>Protocole :</span>
-              <span className="text-slate-900">Basic Auth + Envoy</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Stockage tampon :</span>
-              <span className="text-slate-900 font-semibold">Mémoire + Local</span>
+              <span>Conversations :</span>
+              <span className="text-slate-900 font-semibold">Navigateur (local)</span>
             </div>
           </div>
+          {health && !albertOk && health.albert.error && (
+            <p className="mt-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-md p-2 leading-relaxed">
+              {health.albert.error}
+            </p>
+          )}
         </div>
 
         {/* Bilan Écologique DINUM */}
