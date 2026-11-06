@@ -20,6 +20,7 @@ import {
   ListOrdered,
 } from 'lucide-react';
 import { transcribeAudio } from '../services/albertApi';
+import { ALBERT_MAX_UPLOAD_BYTES, shiftSrt, splitAudioForAlbert } from '../utils/audioChunker';
 import { AudioTranscriptionResult, UserSettings } from '../types';
 
 interface AudioTranscriptionStudioProps {
@@ -29,10 +30,11 @@ interface AudioTranscriptionStudioProps {
 
 const STORAGE_KEY_AUDIO_HISTORY = 'albert_transcription_history';
 
-// Taille maximale acceptée par l'API Albert pour la transcription.
+// Taille maximale d'un fichier dans l'appli ; au-delà de 20 Mo (limite d'Albert par envoi),
+// le fichier est découpé et transcrit morceau par morceau.
 const MAX_AUDIO_FILE_MB = 100;
 const MAX_AUDIO_FILE_BYTES = MAX_AUDIO_FILE_MB * 1024 * 1024;
-const FILE_TOO_LARGE_MESSAGE = `Le fichier dépasse la limite maximale de ${MAX_AUDIO_FILE_MB} Mo d’Albert API.`;
+const FILE_TOO_LARGE_MESSAGE = `Le fichier dépasse la limite maximale de ${MAX_AUDIO_FILE_MB} Mo.`;
 
 export const AudioTranscriptionStudio: React.FC<AudioTranscriptionStudioProps> = ({
   settings,
@@ -61,6 +63,7 @@ export const AudioTranscriptionStudio: React.FC<AudioTranscriptionStudioProps> =
 
   // Traitement
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [currentResult, setCurrentResult] = useState<AudioTranscriptionResult | null>(
     null
   );
@@ -196,16 +199,61 @@ export const AudioTranscriptionStudio: React.FC<AudioTranscriptionStudioProps> =
         selectedFile?.name ||
         (activeMode === 'record' ? 'enregistrement_micro.wav' : 'audio.mp3');
 
-      const res = await transcribeAudio({
-        audio: targetBlob,
-        fileName,
+      const transcribeParams = {
         model: 'whisper-large-v3',
         language: language === 'auto' ? undefined : language,
         prompt: contextPrompt || undefined,
         response_format: responseFormat,
         temperature: 0,
         customApiKey: settings.albertApiKey,
-      });
+      };
+
+      let res: Awaited<ReturnType<typeof transcribeAudio>>;
+      if (targetBlob.size <= ALBERT_MAX_UPLOAD_BYTES) {
+        res = await transcribeAudio({ ...transcribeParams, audio: targetBlob, fileName });
+      } else {
+        // Albert refuse les envois de plus de 20 Mo : découpage en morceaux transcrits l'un après l'autre.
+        setProgressMessage('Découpage du fichier audio…');
+        const chunks = await splitAudioForAlbert(targetBlob);
+        const baseName = fileName.replace(/\.[^.]+$/, '');
+        const texts: string[] = [];
+        const segments: NonNullable<AudioTranscriptionResult['segments']> = [];
+        let srtCount = 0;
+        let model: string | undefined;
+
+        for (const [index, chunk] of chunks.entries()) {
+          setProgressMessage(`Transcription de la partie ${index + 1} sur ${chunks.length}…`);
+          const part = await transcribeAudio({
+            ...transcribeParams,
+            audio: chunk.blob,
+            fileName: `${baseName}_partie${index + 1}.wav`,
+          });
+          model = model || part.model;
+          if (responseFormat === 'srt') {
+            const shifted = shiftSrt(part.text, chunk.offsetSeconds, srtCount + 1);
+            srtCount += shifted.count;
+            texts.push(shifted.text);
+          } else {
+            texts.push(part.text.trim());
+          }
+          for (const seg of part.segments || []) {
+            segments.push({
+              ...seg,
+              id: segments.length,
+              start: seg.start + chunk.offsetSeconds,
+              end: seg.end + chunk.offsetSeconds,
+            });
+          }
+        }
+
+        const last = chunks[chunks.length - 1];
+        res = {
+          text: texts.join(responseFormat === 'srt' ? '\n\n' : '\n'),
+          model,
+          duration: last.offsetSeconds + last.durationSeconds,
+          segments: segments.length > 0 ? segments : undefined,
+        };
+      }
 
       const resultObj: AudioTranscriptionResult = {
         id: res.id || 'transc_' + Date.now(),
@@ -225,6 +273,7 @@ export const AudioTranscriptionStudio: React.FC<AudioTranscriptionStudioProps> =
       setErrorMessage(err.message || 'Échec de la transcription auprès d’Albert');
     } finally {
       setIsTranscribing(false);
+      setProgressMessage(null);
     }
   };
 
@@ -470,7 +519,7 @@ Transforme ce contenu en une fiche pédagogique pour les apprenants (Bac Pro ou 
                 {isTranscribing ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                    <span>Transcription en cours via Albert DINUM...</span>
+                    <span>{progressMessage || 'Transcription en cours via Albert DINUM...'}</span>
                   </>
                 ) : (
                   <>
